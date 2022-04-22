@@ -21,6 +21,7 @@
 #include <srt.h>
 #if !defined(_WIN32)
 #include <sys/ioctl.h>
+#include <sys/un.h>
 #else
 #include <fcntl.h>
 #include <io.h>
@@ -1010,6 +1011,29 @@ public:
     int GetSysSocket() const override { return m_sock; };
 };
 
+class UnixSource: public Source // TODO
+{
+public:
+
+    UnixSource(string path, const map<string,string>& attr)
+    {
+        (void) path;
+        (void) attr;
+    }
+
+    int Read(size_t chunk, MediaPacket& pkt, ostream & ignored SRT_ATR_UNUSED = cout) override
+    {
+        (void) chunk;
+        (void) pkt;
+        return -1;
+    }
+
+    bool IsOpen() override { return false; }
+    bool End() override { return true; }
+
+    int GetSysSocket() const override { return -1; };
+};
+
 class UdpTarget: public Target, public UdpCommon
 {
 public:
@@ -1056,12 +1080,53 @@ public:
     int GetSysSocket() const override { return m_sock; };
 };
 
+class UnixTarget: public Target
+{
+public:
+    UnixTarget(string path, const map<string,string>& attr )
+    {
+        (void) attr;
+        m_sock = socket(AF_UNIX, SOCK_DGRAM, 0);
+        m_addr.sun_family = AF_UNIX;
+        memset(m_addr.sun_path, 0, sizeof(m_addr.sun_path));
+        const auto len = std::min(path.size(), sizeof(m_addr.sun_path) - 1);
+        memcpy(m_addr.sun_path, path.data(), len);
+        m_addrlen = sizeof(sa_family_t) + len + 1;
+    }
+
+    int Write(const char* data, size_t len, int64_t src_time SRT_ATR_UNUSED,  ostream & ignored SRT_ATR_UNUSED = cout) override
+    {
+        int stat = sendto(m_sock, data, (int) len, 0, (const sockaddr*) &m_addr, m_addrlen);
+        if ( stat == -1 )
+        {
+            return stat;
+        }
+        return stat;
+    }
+
+    bool IsOpen() override { return m_sock != -1; }
+    bool Broken() override { return false; }
+
+    int GetSysSocket() const override { return m_sock; };
+private:
+    int m_sock{-1};
+    size_t m_addrlen;
+    sockaddr_un m_addr;
+};
+
 template <class Iface> struct Udp;
 template <> struct Udp<Source> { typedef UdpSource type; };
 template <> struct Udp<Target> { typedef UdpTarget type; };
 
+template <class Iface> struct Unix;
+template <> struct Unix<Source> { typedef UnixSource type; };
+template <> struct Unix<Target> { typedef UnixTarget type; };
+
 template <class Iface>
 Iface* CreateUdp(const string& host, int port, const map<string,string>& par) { return new typename Udp<Iface>::type (host, port, par); }
+
+template <class Iface>
+Iface* CreateUnix(const string& path, const map<string,string>& par) { return new typename Unix<Iface>::type (path, par); }
 
 template<class Base>
 inline bool IsOutput() { return false; }
@@ -1122,7 +1187,12 @@ extern unique_ptr<Base> CreateMedium(const string& uri)
         ptr.reset( CreateUdp<Base>(u.host(), iport, u.parameters()) );
         break;
 
+    case UriParser::UNIX:
+        ptr.reset( CreateUnix<Base>(u.path(), u.parameters()) );
+        break;
     }
+
+
 
     if (ptr.get())
         ptr->uri = move(u);

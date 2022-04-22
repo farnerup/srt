@@ -38,6 +38,7 @@ struct UriParserInit
         types["rtmp"] = UriParser::RTMP;
         types["http"] = UriParser::HTTP;
         types["rtp"] = UriParser::RTP;
+        types["unix"] = UriParser::UNIX;
         types[""] = UriParser::UNKNOWN;
     }
 } g_uriparser_init;
